@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Punch Hours</title>
+<style>
+:root{--bg:#f6f6f3;--card:#fff;--ink:#1c1c1a;--mute:#6b6b66;--line:#e3e2dc;--acc:#1f6f5c;--warn:#b5562b;--ok:#2f7d3a}
+@media (prefers-color-scheme:dark){:root{--bg:#141413;--card:#1e1e1c;--ink:#ecebe6;--mute:#9a9992;--line:#2e2e2b;--acc:#5fbfa3;--warn:#e08a5e;--ok:#7cc488}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+main{max-width:520px;margin:0 auto;padding:20px 16px 40px}
+h1{font-size:22px;margin:0 0 16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+label{font-size:13px;color:var(--mute);display:block;margin-bottom:6px}
+textarea{width:100%;min-height:150px;font:16px/1.6 ui-monospace,Menlo,monospace;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);resize:vertical}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+button{font:inherit;padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:var(--bg);color:var(--ink);cursor:pointer}
+button.on{background:var(--acc);border-color:var(--acc);color:#fff}
+input[type=number]{width:80px;font:inherit;padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
+.big{font-size:34px;font-weight:700;font-variant-numeric:tabular-nums}
+.sub{color:var(--mute);font-size:14px}
+.status{display:inline-block;font-size:12px;font-weight:600;padding:2px 8px;border-radius:999px;margin-left:6px;vertical-align:middle}
+.in{background:var(--ok);color:#fff}.out{background:var(--mute);color:#fff}
+.goals{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.goal{border:1px solid var(--line);border-radius:10px;padding:10px}
+.goal b{font-size:15px}.goal .t{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+.done{color:var(--ok)}.left{color:var(--warn)}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:15px}
+td,th{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left}
+th{color:var(--mute);font-weight:500;font-size:13px}
+td:last-child,th:last-child{text-align:right}
+.err{color:var(--warn);font-size:14px;margin-top:6px}
+</style>
+</head>
+<body>
+<main>
+<h1>Punch Hours</h1>
+
+<div class="card">
+  <label for="punches">Punch times, one per line (1st = IN, 2nd = OUT, …)</label>
+  <textarea id="punches" placeholder="09:30&#10;13:00&#10;13:45" spellcheck="false" inputmode="numeric"></textarea>
+  <div class="row" style="margin-top:8px">
+    <button id="nowBtn">+ Add now</button>
+    <button id="clearBtn">Clear</button>
+  </div>
+  <div class="err" id="err"></div>
+</div>
+
+<div class="card">
+  <label>Target hours</label>
+  <div class="row" id="targets">
+    <button data-h="6" class="on">6h</button>
+    <button data-h="8" class="on">8h</button>
+    <span class="sub">custom</span><input type="number" id="custom" min="0" max="24" step="0.25" placeholder="e.g. 9">
+  </div>
+</div>
+
+<div class="card">
+  <div class="sub">Worked <span class="status" id="state"></span></div>
+  <div class="big" id="worked">0:00:00</div>
+  <div class="sub" id="breaks"></div>
+</div>
+
+<div class="card"><div class="goals" id="goals"></div></div>
+
+<div class="card">
+  <table><thead><tr><th>#</th><th>In</th><th>Out</th><th>Duration</th></tr></thead><tbody id="pairs"></tbody></table>
+</div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const store = {
+  get(k){try{return localStorage.getItem(k)}catch(e){return null}},
+  set(k,v){try{localStorage.setItem(k,v)}catch(e){}}
+};
+const pad = n => String(n).padStart(2,'0');
+const fmtDur = s => { s=Math.max(0,Math.floor(s)); return Math.floor(s/3600)+':'+pad(Math.floor(s%3600/60))+':'+pad(s%60); };
+const fmtHM = s => { s=Math.max(0,Math.round(s/60)); return Math.floor(s/60)+'h '+pad(s%60)+'m'; };
+const fmtClock = secOfDay => { const m=Math.round(secOfDay/60), d=Math.floor(m/1440); const mm=((m%1440)+1440)%1440; return pad(Math.floor(mm/60))+':'+pad(mm%60)+(d>0?' (+'+d+'d)':''); };
+
+// "9:30", "09.30", "930", "0930", "9" -> seconds of day
+function parseTime(str){
+  str=str.replace(/^\s*\d+\s*[.)]\s+/,'').trim(); if(!str) return null;  // drop "1. " numbering
+  let m=str.match(/(\d{1,2})[:.](\d{2})(?:[:.](\d{2}))?/);
+  if(!m){ const d=str.match(/^(\d{1,4})$/); if(!d) return NaN;
+    const v=d[1]; m = v.length<=2 ? [0,v,'00'] : [0,v.slice(0,-2),v.slice(-2)]; }
+  const h=+m[1], mi=+m[2], se=m[3]?+m[3]:0;
+  if(h>23||mi>59||se>59) return NaN;
+  return h*3600+mi*60+se;
+}
+
+let targets = new Set([6,8]);
+try{ const t=JSON.parse(store.get('punch_targets')); if(Array.isArray(t)) targets=new Set(t); }catch(e){}
+$('punches').value = store.get('punch_text') || '';
+$('custom').value = store.get('punch_custom') || '';
+document.querySelectorAll('#targets button').forEach(b=>b.classList.toggle('on',targets.has(+b.dataset.h)));
+
+function nowSec(){ const d=new Date(); return d.getHours()*3600+d.getMinutes()*60+d.getSeconds(); }
+
+function render(){
+  const lines=$('punches').value.split('\n');
+  const times=[]; const bad=[];
+  lines.forEach((l,i)=>{ const t=parseTime(l); if(t===null) return; if(Number.isNaN(t)) bad.push(i+1); else times.push(t); });
+  $('err').textContent = bad.length ? 'Ignored bad line(s): '+bad.join(', ')+'  — use HH:MM' : '';
+
+  // make times monotonic: a time earlier than the previous one = next day
+  const abs=[]; let off=0;
+  times.forEach((t,i)=>{ if(i && t+off<abs[i-1]) off+=86400; abs.push(t+off); });
+
+  const isIn = abs.length%2===1;
+  let now=nowSec(); while(abs.length && now<abs[abs.length-1]) now+=86400;
+
+  let worked=0, brk=0; const rows=[];
+  for(let i=0;i<abs.length;i+=2){
+    const a=abs[i], b=abs[i+1];
+    const end = b!==undefined ? b : now;
+    worked += end-a;
+    if(i>0) brk += a-abs[i-1];
+    rows.push(`<tr><td>${i/2+1}</td><td>${fmtClock(a)}</td><td>${b!==undefined?fmtClock(b):'<i>now…</i>'}</td><td>${fmtDur(end-a)}</td></tr>`);
+  }
+  $('pairs').innerHTML = rows.join('') || '<tr><td colspan="4" class="sub">No punches yet</td></tr>';
+  $('worked').textContent = fmtDur(worked);
+  $('state').textContent = !abs.length ? '' : isIn ? 'IN' : 'OUT';
+  $('state').className = 'status '+(isIn?'in':'out');
+  $('breaks').textContent = abs.length>2 ? 'Breaks: '+fmtHM(brk) : '';
+
+  const list=[...targets]; const c=parseFloat($('custom').value); if(c>0 && !targets.has(c)) list.push(c);
+  list.sort((a,b)=>a-b);
+  $('goals').innerHTML = list.map(h=>{
+    const need=h*3600-worked;
+    if(need<=0) return `<div class="goal"><b>${h}h</b><div class="t done">Done ✓</div><div class="sub">+${fmtHM(-need)} extra</div></div>`;
+    const leave = isIn ? `Leave at <b>${fmtClock(now+need)}</b>` : 'Punch IN to continue';
+    return `<div class="goal"><b>${h}h</b><div class="t left">${fmtHM(need)}</div><div class="sub">left · ${leave}</div></div>`;
+  }).join('') || '<div class="sub">Pick a target</div>';
+}
+
+$('punches').addEventListener('input',()=>{store.set('punch_text',$('punches').value);render();});
+$('custom').addEventListener('input',()=>{store.set('punch_custom',$('custom').value);render();});
+document.querySelectorAll('#targets button').forEach(b=>b.addEventListener('click',()=>{
+  const h=+b.dataset.h; targets.has(h)?targets.delete(h):targets.add(h);
+  b.classList.toggle('on'); store.set('punch_targets',JSON.stringify([...targets])); render();
+}));
+$('nowBtn').addEventListener('click',()=>{
+  const d=new Date(), v=$('punches').value.replace(/\s+$/,'');
+  $('punches').value=(v?v+'\n':'')+pad(d.getHours())+':'+pad(d.getMinutes());
+  store.set('punch_text',$('punches').value); render();
+});
+$('clearBtn').addEventListener('click',()=>{ $('punches').value=''; store.set('punch_text',''); render(); });
+
+render(); setInterval(render,1000);
+</script>
+</body>
+</html>
