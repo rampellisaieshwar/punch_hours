@@ -68,9 +68,10 @@ td:last-child,th:last-child{text-align:right}
 <div class="card">
   <table><thead><tr><th>#</th><th>In</th><th>Out</th><th>Duration</th></tr></thead><tbody id="pairs"></tbody></table>
 </div>
-<div class="views" title="Total visits, all devices">
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-  <span id="views">–</span>
+<div class="views">
+  <span title="Total visits, all devices"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-3px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg> Total <span id="views">–</span></span>
+  <span>·</span>
+  <span title="Visits today (IST), all devices"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-3px"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg> Today <span id="today">–</span></span>
 </div>
 </main>
 
@@ -155,9 +156,12 @@ $('nowBtn').addEventListener('click',()=>{
 $('clearBtn').addEventListener('click',()=>{ $('punches').value=''; store.set('punch_text',''); render(); });
 
 render(); setInterval(render,1000);
-fetch('https://abacus.jasoncameron.dev/hit/punchhours-ph7k2/visits')
-  .then(r=>r.json()).then(d=>{ if(d.value>=0) $('views').textContent=d.value.toLocaleString(); })
+const hit=(key,el)=>fetch('https://abacus.jasoncameron.dev/hit/punchhours-ph7k2/'+key)
+  .then(r=>r.json()).then(d=>{ if(d.value>=0) $(el).textContent=d.value.toLocaleString(); })
   .catch(()=>{});
+hit('visits','views');
+// one key per IST day, so every device shares the same "today"
+hit('d-'+new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Kolkata'}),'today');
 </script>
 </body>
 </html>
